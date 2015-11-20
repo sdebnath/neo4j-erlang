@@ -1,7 +1,7 @@
 PROJECT = neo4j
 
-DEPS = hackney jiffy
-dep_hackney = git https://github.com/benoitc/hackney master
+DEPS = dlhttpc jiffy
+dep_dlhttpc = git https://github.com/ferd/dlhttpc master
 dep_jiffy = git https://github.com/davisp/jiffy master
 
 PLT_APPS ?= asn1 compiler crypto erts inets kernel public_key stdlib ssl syntax_tools

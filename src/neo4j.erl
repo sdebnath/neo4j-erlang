@@ -157,6 +157,8 @@
     maybe_improper_list() | {maybe_improper_list()} | {error, term()}.
 -type neo4j_type() :: property_list().
 
+-define(DEFAULT_HTTP_TIMEOUT, 10000).
+
 %%_* API =======================================================================
 
 %%_* General -------------------------------------------------------------------
@@ -166,7 +168,7 @@
 connect([]) ->
   {error, base_uri_not_specified};
 connect(Options) ->
-  _ = start_app(hackney),
+  _ = start_app(dlhttpc),
   case find(base_uri, 1, Options) of
     {_, BaseURI} -> get_root(BaseURI);
     _            -> {error, base_uri_not_specified}
@@ -1368,13 +1370,12 @@ remove_relationship_auto_index_property(Neo, Property) ->
 -spec get_root(binary()) -> neo4j_root() | {error, term()}.
 get_root(BaseURI) when is_list(BaseURI)   -> get_root(list_to_binary(BaseURI));
 get_root(BaseURI) when is_binary(BaseURI) ->
-  case hackney:request(get, BaseURI, headers()) of
+  BaseURIStr = binary_to_list(BaseURI),
+  case dlhttpc:request(BaseURIStr, get, headers(), ?DEFAULT_HTTP_TIMEOUT) of
     {error, Reason} -> {error, Reason};
-    {ok, StatusCode, _, Client} when StatusCode /= 200 ->
-      {ok, Body} = hackney:body(Client),
+    {ok, {{StatusCode, _}, _, Body}} when StatusCode /= 200 ->
       {error, {non_200_response, StatusCode, Body}};
-    {ok, _, _, Client} ->
-      {ok, Body} = hackney:body(Client),
+    {ok, {_, _, Body}} ->
       Root = jiffy:decode(Body),
       %% we add some links as these are not returned by neo4j
       %% and we wouldn't want to recreate them over and over again
@@ -1388,88 +1389,84 @@ get_root(BaseURI) when is_binary(BaseURI) ->
   end.
 
 -spec create(binary()) -> {neo4j_type()} | {error, term()}.
-create(URI) ->
-  case hackney:request(post, URI, headers()) of
+create(URI) when is_binary(URI) -> create(binary_to_list(URI));
+create(URI) when is_list(URI) ->
+  case dlhttpc:request(URI, post, headers(), [], ?DEFAULT_HTTP_TIMEOUT) of
     {error, Reason} -> {error, Reason};
-    {ok, 200, _, Client} ->
-      {ok, Body} = hackney:body(Client),
+    {ok, {{200, _}, _, Body}} ->
       jiffy:decode(Body);
-    {ok, 201, Headers, Client} ->
-      {ok, Body} = hackney:body(Client),
+    {ok, {{201, _}, Headers, Body}} ->
       case find(<<"Location">>, 1, Headers) of
         {_, Location} ->
           prepend({<<"self">>, Location}, jiffy:decode(Body));
         _             ->
           jiffy:decode(Body)
       end;
-    {ok, 204, _, Client} ->
-      _ = hackney:skip_body(Client),
+    {ok, {{204, _}, _, _}} ->
       ok;
-    {ok, Status, _, Client} ->
-      process_response(URI, Status, Client)
+    {ok, {{Status, _}, _, Body}} ->
+      process_response(URI, Status, Body)
   end.
 
 -spec create(binary(), binary() | iolist()) -> {neo4j_type()} | {error, term()}.
-create(URI, Payload) ->
-  case hackney:request(post, URI, headers(), Payload) of
+create(URI, Payload) when is_binary(URI) -> create(binary_to_list(URI), Payload);
+create(URI, Payload) when is_binary(Payload) -> create(URI, binary_to_list(Payload));
+create(URI, Payload) when is_list(URI), is_list(Payload) ->
+  case dlhttpc:request(URI, post, headers(), Payload, ?DEFAULT_HTTP_TIMEOUT) of
     {error, Reason} -> {error, Reason};
-    {ok, 200, _, Client} ->
-      {ok, Body} = hackney:body(Client),
+    {ok, {{200, _}, _, Body}} ->
       jiffy:decode(Body);
-    {ok, 201, Headers, Client} ->
-      {ok, Body} = hackney:body(Client),
+    {ok, {{201, _}, Headers, Body}} ->
       case find(<<"Location">>, 1, Headers) of
         {_, Location} ->
           prepend({<<"self">>, Location}, jiffy:decode(Body));
         _             ->
           jiffy:decode(Body)
       end;
-    {ok, 204, _, Client} ->
-      _ = hackney:skip_body(Client),
+    {ok, {{204, _}, _, _}} ->
       ok;
-    {ok, Status, _, Client} ->
-      process_response(URI, Status, Client)
+    {ok, {{Status, _}, _, Body}} ->
+      process_response(URI, Status, Body)
   end.
 
 -spec retrieve(binary()) -> neo4j_type() | binary() | [term()] | {error, term()}.
-retrieve(URI) ->
-  case hackney:request(get, URI, headers()) of
+retrieve(URI) when is_binary(URI) -> retrieve(binary_to_list(URI));
+retrieve(URI) when is_list(URI) ->
+  case dlhttpc:request(URI, get, headers(), ?DEFAULT_HTTP_TIMEOUT) of
     {error, Reason} -> {error, Reason};
-    {ok, 404, _, _} ->
+    {ok, {{404, _}, _, _}} ->
       {error, not_found};
-    {ok, 200, _, Client} ->
-      {ok, Body} = hackney:body(Client),
+    {ok, {{200, _}, _, Body}} ->
       jiffy:decode(Body);
-    {ok, 204, _, Client} ->
-      _ = hackney:skip_body(Client),
+    {ok, {{204, _}, _, _}} ->
       <<>>;
-    {ok, Status, _, Client} ->
-      process_response(URI, Status, Client)
+    {ok, {{Status, _}, _, Body}} ->
+      process_response(URI, Status, Body)
   end.
 
 -spec update(binary(), binary()) -> ok | {error, term()}.
-update(URI, Payload) ->
-  case hackney:request(put, URI, headers(), Payload) of
+update(URI, Payload) when is_binary(URI) -> update(binary_to_list(URI), Payload);
+update(URI, Payload) when is_binary(Payload) -> update(URI, binary_to_list(Payload));
+update(URI, Payload) when is_list(URI), is_list(Payload) ->
+  case dlhttpc:request(URI, put, headers(), Payload, ?DEFAULT_HTTP_TIMEOUT) of
     {error, Reason} -> {error, Reason};
-    {ok, 204, _, Client} ->
-      _ = hackney:skip_body(Client),
+    {ok, {{204, _}, _, _}} ->
       ok;
-    {ok, Status, _, Client} ->
-      process_response(URI, Status, Client)
+    {ok, {{Status, _}, _, Body}} ->
+      process_response(URI, Status, Body)
   end.
 
 -spec delete(binary()) -> ok | {error, term()}.
-delete(URI) ->
-  case hackney:request(delete, URI) of
+delete(URI) when is_binary(URI) -> delete(binary_to_list(URI));
+delete(URI) when is_list(URI) ->
+  case dlhttpc:request(URI, delete, [], [], ?DEFAULT_HTTP_TIMEOUT) of
     {error, Reason} -> {error, Reason};
-    {ok, 204, _, Client} ->
-      _ = hackney:skip_body(Client),
+    {ok, {{204, _}, _, _}} ->
       ok;
-    {ok, 200, _, Client} ->
-      {ok, Body} = hackney:body(Client),
+    {ok, {{200, _}, _, Body}} ->
       jiffy:decode(Body);
-    {ok, Status, _, Client} ->
-      process_response(URI, Status, Client)
+    {ok, {{Status, _}, _, Body}} ->
+      process_response(URI, Status, Body)
   end.
 
 %%
@@ -1614,12 +1611,11 @@ id(Obj) ->
   lists:last(binary:split(URI, <<"/">>, [global])).
 
 -spec process_response(binary(), integer(), term()) -> {error, term()}.
-process_response(URI, 404, _Client) ->
+process_response(URI, 404, _Body) ->
   {error, {not_found, URI}};
-process_response(URI, 405, _Client) ->
+process_response(URI, 405, _Body) ->
   {error, {method_not_allowed, URI}};
-process_response(URI, Status, Client) ->
-  {ok, Body} = hackney:body(Client),
+process_response(URI, Status, Body) ->
   case Body of
     <<>> -> {error, {Status, URI, <<>>}};
     _ -> {error, {Status, URI, jiffy:decode(Body)}}
@@ -1641,8 +1637,8 @@ encode_query_string(Props) ->
 
 -spec headers() -> property_list().
 headers() ->
-  [ {<<"Accept">>, <<"application/json; charset=UTF-8">>}
-  , {<<"Content-Type">>, <<"application/json">>}
+  [ {"Accept", "application/json; charset=UTF-8"}
+  , {"Content-Type", "application/json"}
   ].
 
 
